@@ -82,7 +82,7 @@ if [ $# -lt 1 ] ; then
     exit
 fi
 
-while getopts "p:cshl:ev" arg
+while getopts "pfw:cshl:ev" arg
 do
     case "$arg" in
         "p")

@@ -224,6 +224,8 @@ void usage()
     -l size     -- specify the maximun string length to print\n\
     -e          -- show error message of error code\n\
     -v          -- set log level to debug\n\
+    -w write	-- write log to disk, as an real absolutely path\n\
+    -f format	-- output and write log format\n\
     \n");
 }
 
@@ -273,27 +275,84 @@ sds sdscatrepr_noquto(sds s, const char *p, size_t len)
     return s;
 }
 
+sds sdscatrepr_json(sds s, const char *p, size_t len)
+{
+    while (len--) {
+        switch (*p) {
+            case '\\':
+            case '\n': s = sdscatlen(s,"\\n",2); break;
+            case '\r': s = sdscatlen(s,"\\r",2); break;
+            case '\t': s = sdscatlen(s,"\\t",2); break;
+            case '\a': s = sdscatlen(s,"\\a",2); break;
+            case '\b': s = sdscatlen(s,"\\b",2); break;
+            case '{': s = sdscatlen(s,"\\{",2); break;
+			case '}': s = sdscatlen(s,"\\}",2); break;
+			case '"': s = sdscatlen(s,"\\\"",2); break;
+			case '/': s = sdscatlen(s,"\\/",2); break;
+            default:
+                       if (isprint(*p)) {
+                           s = sdscatprintf(s,"%c",*p);
+                       } else {
+                           s = sdscatprintf(s,"\\x%02x",(unsigned char)*p);
+                       }
+                       break;
+        }
+        p++;
+    }
+    return s;
+}
+
 void print_record(phptrace_context_t *ctx, phptrace_file_record_t *r)
 {
     sds buf = sdsempty();
-    if (r->flag == RECORD_FLAG_ENTRY) {
-        buf = print_time(buf, r->start_time);
-        buf = print_indent_str(buf, "  ", r->level);
-        buf = sdscatprintf (buf, "%s(", r->function_name);
-        buf = sdscatrepr_noquto(buf, RECORD_ENTRY(r, params),
-                MIN(sdslen(RECORD_ENTRY(r, params)), ctx->max_print_len));
-        buf = sdscatprintf (buf, ")  %s:%u", RECORD_ENTRY(r, filename), RECORD_ENTRY(r, lineno));
-    } else {
-        buf = print_time(buf, r->start_time + RECORD_EXIT(r, cost_time));
-        buf = print_indent_str(buf, "  ", r->level);
-        buf = sdscatprintf (buf, "%s  =>  ", r->function_name);
-        buf = sdscatrepr_noquto(buf, RECORD_EXIT(r, return_value),
-                MIN(sdslen(RECORD_EXIT(r, return_value)), ctx->max_print_len));
-        buf = sdscatprintf (buf, "    ");
-        buf = print_time(buf, RECORD_EXIT(r, cost_time));
-    }
+    if (ctx->format == OUTPUT_FORMAT_JSON){
+		if (r->flag == RECORD_FLAG_ENTRY){
+			buf = sdscatprintf(buf, "{\"date\":");
+			buf = print_time(buf, r->start_time);
+			buf = sdscatprintf(buf, ",\"level\":%d", r->level);
+			buf = sdscatprintf(buf, ",\"function\":\"%s\",\"args\":\"", r->function_name);
+			buf = sdscatrepr_json(buf, RECORD_ENTRY(r, params),
+					MIN(sdslen(RECORD_ENTRY(r, params)), ctx->max_print_len));
+			buf = sdscatprintf(buf, "\",\"file\":\"%s\",\"line\":%d,\"t\":\"std\"}", RECORD_ENTRY(r, filename), RECORD_ENTRY(r, lineno));
+		} else {
+			buf = sdscatprintf(buf, "{\"date\":");
+			buf = print_time(buf, r->start_time);
+			buf = sdscatprintf(buf, ",\"level\":%d", r->level);
+			buf = sdscatprintf(buf, ",\"function\":\"%s\",\"return\":\"", r->function_name);
+			buf = sdscatrepr_json(buf, RECORD_EXIT(r, return_value),
+					MIN(sdslen(RECORD_EXIT(r, return_value)), ctx->max_print_len));
+			buf = sdscatprintf(buf, "\",\"cost\":");
+			buf = print_time(buf, RECORD_EXIT(r, cost_time));
+			buf = sdscatprintf(buf, ",\"t\":\"return\"}");
+		}
+	} else {
+		if (r->flag == RECORD_FLAG_ENTRY) {
+			buf = print_time(buf, r->start_time);
+			buf = print_indent_str(buf, "  ", r->level);
+			buf = sdscatprintf (buf, "%s(", r->function_name);
+			buf = sdscatrepr_noquto(buf, RECORD_ENTRY(r, params),
+					MIN(sdslen(RECORD_ENTRY(r, params)), ctx->max_print_len));
+			buf = sdscatprintf (buf, ")  %s:%u", RECORD_ENTRY(r, filename), RECORD_ENTRY(r, lineno));
+		} else {
+			buf = print_time(buf, r->start_time + RECORD_EXIT(r, cost_time));
+			buf = print_indent_str(buf, "  ", r->level);
+			buf = sdscatprintf (buf, "%s  =>  ", r->function_name);
+			buf = sdscatrepr_noquto(buf, RECORD_EXIT(r, return_value),
+					MIN(sdslen(RECORD_EXIT(r, return_value)), ctx->max_print_len));
+			buf = sdscatprintf (buf, "    ");
+			buf = print_time(buf, RECORD_EXIT(r, cost_time));
+		}
+	}
+    
+    
     log_printf (LL_DEBUG, " record_sds[%s]\n", buf);
-    printf ("%s\n", buf);
+    if (ctx->log_path == NULL){
+		printf ("%s\n", buf);
+	} else {
+		if (ctx->log_fp != NULL){
+			fprintf(ctx->log_fp, "%s\n", buf);
+		}
+	}
     sdsfree (buf);
     fflush(NULL);
 }
@@ -583,6 +642,8 @@ void init(phptrace_context_t *ctx, int argc, char *argv[])
         {"err-msg",  no_argument, 0, 'e'},                  /* error msg, for debug */
         {"max-length",  required_argument, 0, 'l'},         /* max str length to print */
         {"log-debug",  no_argument, 0, 'v'},                /* log_level to debug */
+        {"write", required_argument, 0, 'w'},				/* write log and log path */
+        {"format", required_argument, 0, 'f'},				/* format output and log stream */
         {0, 0, 0, 0}
     };
 
@@ -594,7 +655,7 @@ void init(phptrace_context_t *ctx, int argc, char *argv[])
     phptrace_context_init(ctx);
     ctx->progname = argv[0] ? argv[0] : "phptrace";
 
-    while ((c = getopt_long(argc, argv, "hcel:vp:", long_options, &opt_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "hcel:vp:w:f:", long_options, &opt_index)) != -1) {
         switch (c) {
             case 0:             /* args for stack */
                 if (!optarg) {
@@ -634,6 +695,23 @@ void init(phptrace_context_t *ctx, int argc, char *argv[])
                 }
                 ctx->opt_p_flag = 1;
                 break;
+			case 'w':
+				ctx->log_path = optarg;
+				ctx->log_fp = fopen(ctx->log_path, "w+");
+				if (ctx->log_fp != NULL){
+					printf("enabled log to disk.\n");
+					printf("start write log.\n");
+				} else {
+					printf("disable write. please check file or dictory mode\n");
+				}
+				break;
+			case 'f':
+				if (strcmp(optarg, "json") == 0){
+					ctx->format = OUTPUT_FORMAT_JSON;
+				} else {
+					ctx->format = OUTPUT_FORMAT_STD;
+				}
+				break;
             case 'c':
                 ctx->opt_c_flag = 1;
                 break;

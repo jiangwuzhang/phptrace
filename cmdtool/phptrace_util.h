@@ -31,6 +31,9 @@
 
 #define RECORD_STRING_LENGTH  (4 * 1024)
 
+#define OUTPUT_FORMAT_STD 1
+#define OUTPUT_FORMAT_JSON 2
+
 #define OPEN_DATA_WAIT_INTERVAL 100                                 /* ms */
 #define MAX_OPEN_DATA_WAIT_INTERVAL (OPEN_DATA_WAIT_INTERVAL * 16)  /* ms */
 #define DATA_WAIT_INTERVAL 10                                       /* ms */
@@ -100,6 +103,10 @@ typedef struct phptrace_context_s {
     int log_level;                      /* log level */
     sds mmap_filename;
     int php_pid;                        /* pid of the -p option */
+    
+    char* log_path;						/* if log file, the file absolute path */
+    FILE* log_fp;						/* if log file, log*/
+    int format;							/* format can xml,json,stdanrad... */
 
     int trace_flag;                     /* flag of trace data, default 0 */
     int opt_c_flag;                     /* flag of cmdtool option -c, default 0 */
@@ -150,9 +157,11 @@ void usage();
 
 /* print utils */
 sds sdscatrepr_noquto(sds s, const char *p, size_t len);
+sds sdscatrepr_json(sds s, const char *p, size_t len);
 sds print_indent_str(sds s, char* str, int32_t size);
 sds print_time(sds s, uint64_t t);
 void print_record(phptrace_context_t *ctx, phptrace_file_record_t *r);
+
 void phptrace_record_free(phptrace_file_record_t *r);
 void trace(phptrace_context_t *ctx);
 void trace_cleanup(phptrace_context_t *ctx);
